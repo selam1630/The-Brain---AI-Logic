@@ -1,0 +1,183 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User Model
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String?
+  password  String     // Hash password in practice
+  avatar    String?
+  language  String     @default("en")
+  theme     String     @default("light")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  conversations Conversation[]
+  preferences   UserPreference?
+
+  @@map("users")
+}
+
+// User Preferences for persistence
+model UserPreference {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  theme     String   @default("light") // light or dark
+  language  String   @default("en")
+  autoSave  Boolean  @default(true)
+  privacy   String   @default("private") // private, shared, public
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+// Conversation Model (Chat Records)
+model Conversation {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String?
+  description String?
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  // Relations
+  messages    Message[]
+  transcripts Transcript[]
+
+  @@index([userId])
+  @@map("conversations")
+}
+
+// Transcript Model (Speech-to-Text)
+model Transcript {
+  id              String       @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  
+  // Raw audio/video data
+  audioUrl        String?
+  videoUrl        String?
+  duration        Int?         // Duration in milliseconds
+  
+  // Transcription data
+  rawText         String?
+  normalizedText  String?
+  language        String       @default("en")
+  confidence      Float?       // Confidence score 0-1
+  
+  // Processing metadata
+  provider        String?      // e.g., "openai", "google-cloud", "web-speech-api"
+  processingTime  Int?         // in milliseconds
+  status          TranscriptStatus @default(PENDING)
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  
+  // Relations
+  messages        Message[]
+
+  @@index([conversationId])
+  @@index([status])
+  @@map("transcripts")
+}
+
+enum TranscriptStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Message Model
+model Message {
+  id            String       @id @default(cuid())
+  conversationId String
+  conversation  Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  
+  transcriptId  String?
+  transcript    Transcript?  @relation(fields: [transcriptId], references: [id], onDelete: SetNull)
+  
+  content       String
+  type          MessageType  @default(USER)
+  sender        String?
+  
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([conversationId])
+  @@index([transcriptId])
+  @@map("messages")
+}
+
+enum MessageType {
+  USER
+  ASSISTANT
+  SYSTEM
+  NOTIFICATION
+}
+
+// Audit Log for GDPR compliance
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String
+  resource    String
+  resourceId  String?
+  oldValue    String?
+  newValue    String?
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// GDPR Data Request
+model GDPRRequest {
+  id        String         @id @default(cuid())
+  userId    String
+  type      GDPRRequestType
+  status    GDPRRequestStatus @default(PENDING)
+  reason    String?
+  
+  createdAt DateTime       @default(now())
+  completedAt DateTime?
+  expiresAt DateTime?
+
+  @@index([userId])
+  @@map("gdpr_requests")
+}
+
+enum GDPRRequestType {
+  DATA_EXPORT
+  DATA_DELETION
+  DATA_RECTIFICATION
+}
+
+enum GDPRRequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}

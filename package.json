@@ -1,0 +1,27 @@
+{
+  "name": "the-brain-ai-logic",
+  "version": "1.0.0",
+  "description": "The Brain - AI & Logic Platform with Speech-to-Text API",
+  "private": true,
+  "workspaces": [
+    "apps/backend",
+    "apps/frontend",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/backend & npm run dev -w apps/frontend",
+    "dev:backend": "npm run dev -w apps/backend",
+    "dev:frontend": "npm run dev -w apps/frontend",
+    "build": "npm run build -w apps/backend && npm run build -w apps/frontend",
+    "test": "npm run test -w apps/backend && npm run test -w apps/frontend",
+    "test:backend": "npm run test -w apps/backend",
+    "test:frontend": "npm run test -w apps/frontend",
+    "lint": "npm run lint -w apps/backend && npm run lint -w apps/frontend",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,js,json,css,md}\"",
+    "db:migrate": "npm run migrate -w apps/backend",
+    "db:seed": "npm run seed -w apps/backend"
+  },
+  "devDependencies": {
+    "prettier": "^3.0.0"
+  }
+}

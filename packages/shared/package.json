@@ -1,0 +1,10 @@
+{
+  "name": "@the-brain/shared",
+  "version": "1.0.0",
+  "description": "Shared types and utilities for The Brain platform",
+  "private": true,
+  "main": "types/index.ts",
+  "exports": {
+    "./types": "./types/index.ts"
+  }
+}
