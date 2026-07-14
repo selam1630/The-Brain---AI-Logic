@@ -15,7 +15,7 @@ import { useTheme } from 'next-themes';
  * Includes smooth transitions and icon changes
  */
 export const ThemeToggle: React.FC = () => {
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   // Prevent hydration mismatch

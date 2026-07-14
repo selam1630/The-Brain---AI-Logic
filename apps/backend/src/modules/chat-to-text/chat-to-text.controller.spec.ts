@@ -1,8 +1,3 @@
-/**
- * Chat-to-Text Module Integration Tests
- * Comprehensive integration test suite for ChatToTextController
- * Tests complete HTTP request/response cycle
- */
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -84,7 +79,7 @@ describe('ChatToTextController (Integration)', () => {
         .expect(201);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toEqual(mockTranscript);
+      expect(response.body.data).toEqual(JSON.parse(JSON.stringify(mockTranscript)));
       expect(chatToTextService.create).toHaveBeenCalledWith(createDto);
     });
 
@@ -110,7 +105,7 @@ describe('ChatToTextController (Integration)', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toEqual(mockTranscript);
+      expect(response.body.data).toEqual(JSON.parse(JSON.stringify(mockTranscript)));
       expect(chatToTextService.findById).toHaveBeenCalledWith('transcript_123');
     });
   });
@@ -127,7 +122,7 @@ describe('ChatToTextController (Integration)', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toEqual(transcripts);
+      expect(response.body.data).toEqual(JSON.parse(JSON.stringify(transcripts)));
       expect(response.body.count).toBe(1);
     });
   });
@@ -148,7 +143,7 @@ describe('ChatToTextController (Integration)', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toEqual(updatedTranscript);
+      expect(response.body.data).toEqual(JSON.parse(JSON.stringify(updatedTranscript)));
       expect(chatToTextService.update).toHaveBeenCalledWith(
         'transcript_123',
         updateDto,
@@ -196,7 +191,7 @@ describe('ChatToTextController (Integration)', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data).toEqual(history);
+      expect(response.body.data).toEqual(JSON.parse(JSON.stringify(history)));
     });
   });
 
