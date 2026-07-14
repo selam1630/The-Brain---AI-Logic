@@ -10,6 +10,7 @@ export enum TranscriptProvider {
   GOOGLE_CLOUD = 'google-cloud',
   WEB_SPEECH_API = 'web-speech-api',
   AZURE = 'azure',
+  FASTER_WHISPER = 'faster-whisper',
 }
 
 export class CreateTranscriptDto {

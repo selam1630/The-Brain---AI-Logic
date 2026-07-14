@@ -169,8 +169,9 @@ the-brain-ai-logic/
    PORT=3001
    NODE_ENV=development
 
-   # Speech-to-Text providers
-   OPENAI_API_KEY=your_key_here
+   # Local Speech-to-Text (faster-whisper)
+   FASTER_WHISPER_PYTHON_PATH=python3
+   FASTER_WHISPER_MODEL=base
    ```
 
 4. **Set up the database**
@@ -382,8 +383,8 @@ language=en
 ```
 
 - Accepts `aac`, `flac`, `m4a`, `mp3`, `mp4`, `ogg`, `wav`, and `webm` containers up to 25 MB.
-- The backend sends the upload to OpenAI using `OPENAI_API_KEY`, normalizes the returned text, and persists a `Transcript` plus linked conversation `Message`.
-- Raw audio bytes are used only for the upstream request and are not stored in the database.
+- The backend transcribes the upload locally with faster-whisper, normalizes the returned text, and persists a `Transcript` plus linked conversation `Message`.
+- Raw audio is used only for local processing, then deleted; it is not stored in the database.
 
 #### 2. Create Transcript
 ```http

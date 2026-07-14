@@ -62,7 +62,7 @@ export class ChatToTextController {
 
   /**
    * Converts an uploaded audio or video file to a persisted transcript.
-   * The upload is held in memory only for the provider request and is not stored.
+   * The upload is stored in a temporary local directory only while decoding and is then deleted.
    */
   @Post('transcribe')
   @HttpCode(HttpStatus.CREATED)

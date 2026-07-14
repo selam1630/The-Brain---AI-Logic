@@ -10,15 +10,49 @@ import Head from 'next/head';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import Link from 'next/link';
 
-interface Transcript {
+const CONVERSATION_ID_STORAGE_KEY = 'the-brain.chat-to-text.conversation-id';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+
+interface ITranscript {
   id: string;
   conversationId: string;
-  rawText: string;
-  normalizedText: string;
+  rawText: string | null;
+  normalizedText: string | null;
   status: string;
   createdAt: string;
   language: string;
 }
+
+interface IApiSuccessResponse<T> {
+  success: true;
+  data: T;
+  message: string;
+}
+
+interface IApiErrorResponse {
+  message?: string | string[];
+}
+
+/** Returns a user-friendly message from an API error payload. */
+const getApiErrorMessage = (payload: unknown): string | undefined => {
+  if (typeof payload !== 'object' || payload === null || !('message' in payload)) {
+    return undefined;
+  }
+
+  const message = (payload as IApiErrorResponse).message;
+  return Array.isArray(message) ? message.join(', ') : message;
+};
+
+/** Narrows an unknown response to the API transcript response contract. */
+const isTranscriptResponse = (payload: unknown): payload is IApiSuccessResponse<ITranscript> => {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'success' in payload &&
+    (payload as { success: unknown }).success === true &&
+    'data' in payload
+  );
+};
 
 /**
  * Chat-to-Text Page Component
@@ -27,7 +61,7 @@ interface Transcript {
 const ChatToText: NextPage = () => {
   // State management
   const [isRecording, setIsRecording] = useState(false);
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
+  const [transcripts, setTranscripts] = useState<ITranscript[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string>('');
@@ -37,28 +71,32 @@ const ChatToText: NextPage = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  /**
-   * Initialize conversation on component mount
-   */
+  /** Restores the last valid conversation ID selected by the user. */
   useEffect(() => {
-    const initializeConversation = async () => {
-      try {
-        // In a real app, this would create a new conversation
-        // For now, we'll use a demo ID
-        const demoId = `conv_${Date.now()}`;
-        setConversationId(demoId);
-      } catch (err) {
-        setError('Failed to initialize conversation');
-      }
-    };
-
-    initializeConversation();
+    setConversationId(localStorage.getItem(CONVERSATION_ID_STORAGE_KEY) ?? '');
   }, []);
+
+  /** Persists the selected conversation so the user does not need to re-enter it on refresh. */
+  const handleConversationIdChange = (value: string) => {
+    setConversationId(value);
+    const trimmedValue = value.trim();
+
+    if (trimmedValue) {
+      localStorage.setItem(CONVERSATION_ID_STORAGE_KEY, trimmedValue);
+    } else {
+      localStorage.removeItem(CONVERSATION_ID_STORAGE_KEY);
+    }
+  };
 
   /**
    * Start audio recording
    */
   const startRecording = async () => {
+    if (!conversationId.trim()) {
+      setError('Enter an existing conversation ID before recording.');
+      return;
+    }
+
     try {
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -69,14 +107,17 @@ const ChatToText: NextPage = () => {
         },
       });
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm',
-      });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
 
       audioChunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
 
       mediaRecorder.onstop = async () => {
@@ -87,9 +128,8 @@ const ChatToText: NextPage = () => {
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start();
       setIsRecording(true);
-    } catch (err) {
+    } catch {
       setError('Failed to access microphone. Please check permissions.');
-      console.error('Recording error:', err);
     }
   };
 
@@ -107,45 +147,44 @@ const ChatToText: NextPage = () => {
    * Handle transcription of recorded audio
    */
   const handleTranscription = async () => {
-    if (!conversationId || audioChunksRef.current.length === 0) {
-      setError('No audio recorded or conversation not initialized');
+    const currentConversationId = conversationId.trim();
+    if (!currentConversationId || audioChunksRef.current.length === 0) {
+      setError('No audio was recorded or no conversation ID was provided.');
       return;
     }
 
     setIsLoading(true);
     try {
       const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-      const reader = new FileReader();
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'recording.webm');
+      formData.append('conversationId', currentConversationId);
+      formData.append('language', selectedLanguage);
 
-      reader.onload = async () => {
-        try {
-          // For demo purposes, we'll create a transcript with dummy data
-          // In production, this would send to your speech-to-text API
-          const mockTranscript: Transcript = {
-            id: `transcript_${Date.now()}`,
-            conversationId,
-            rawText: 'This is a demo transcription of your recording',
-            normalizedText: 'This is a demo transcription of your recording.',
-            status: 'COMPLETED',
-            createdAt: new Date().toISOString(),
-            language: selectedLanguage,
-          };
+      const response = await fetch(`${API_BASE_URL}/api/v1/chat-to-text/transcribe`, {
+        method: 'POST',
+        body: formData,
+      });
+      const payload: unknown = await response.json().catch(() => null);
 
-          setTranscripts((prev) => [mockTranscript, ...prev]);
-          audioChunksRef.current = [];
-        } catch (err) {
-          setError('Failed to process audio');
-          console.error('Transcription error:', err);
-        } finally {
-          setIsLoading(false);
-        }
-      };
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload) ?? 'The transcription request failed.');
+      }
 
-      reader.readAsArrayBuffer(audioBlob);
-    } catch (err) {
-      setError('Failed to transcribe audio');
+      if (!isTranscriptResponse(payload)) {
+        throw new Error('The transcription service returned an invalid response.');
+      }
+
+      setTranscripts((previousTranscripts) => [payload.data, ...previousTranscripts]);
+      audioChunksRef.current = [];
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Failed to transcribe the recorded audio.',
+      );
+    } finally {
       setIsLoading(false);
-      console.error('Error:', err);
     }
   };
 
@@ -160,7 +199,7 @@ const ChatToText: NextPage = () => {
    * Copy transcript text to clipboard
    */
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    void navigator.clipboard.writeText(text);
   };
 
   return (
@@ -220,6 +259,28 @@ const ChatToText: NextPage = () => {
             <h2 className="text-2xl font-semibold mb-6 text-gray-900 dark:text-white">
               Record Audio
             </h2>
+
+            <div className="mb-6">
+              <label
+                htmlFor="conversation-id"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+              >
+                Conversation ID
+              </label>
+              <input
+                id="conversation-id"
+                type="text"
+                value={conversationId}
+                onChange={(event) => handleConversationIdChange(event.target.value)}
+                disabled={isRecording || isLoading}
+                className="input-field"
+                placeholder="Paste an existing conversation ID"
+                aria-describedby="conversation-id-help"
+              />
+              <p id="conversation-id-help" className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                The ID must belong to a conversation already saved in the database.
+              </p>
+            </div>
 
             {/* Language Selection */}
             <div className="mb-6">
@@ -314,7 +375,7 @@ const ChatToText: NextPage = () => {
 
                       <div className="flex gap-2">
                         <button
-                          onClick={() => copyToClipboard(transcript.normalizedText)}
+                          onClick={() => copyToClipboard(transcript.normalizedText ?? '')}
                           className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                           title="Copy to clipboard"
                         >
@@ -336,7 +397,7 @@ const ChatToText: NextPage = () => {
                         Raw Text:
                       </h4>
                       <p className="text-gray-600 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800 rounded text-sm">
-                        {transcript.rawText}
+                        {transcript.rawText ?? 'No raw text available.'}
                       </p>
                     </div>
 
@@ -346,7 +407,7 @@ const ChatToText: NextPage = () => {
                         Normalized Text:
                       </h4>
                       <p className="text-gray-700 dark:text-gray-200 p-3 bg-blue-50 dark:bg-blue-900/20 rounded text-sm">
-                        {transcript.normalizedText}
+                        {transcript.normalizedText ?? 'No normalized text available.'}
                       </p>
                     </div>
                   </div>
