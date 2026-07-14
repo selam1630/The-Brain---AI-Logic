@@ -13,6 +13,7 @@
  */
 
 import {
+  BadRequestException,
   Controller,
   Post,
   Get,
@@ -23,15 +24,76 @@ import {
   HttpStatus,
   HttpCode,
   Logger,
+  ParseFilePipeBuilder,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ChatToTextService } from './chat-to-text.service';
-import { CreateTranscriptDto, UpdateTranscriptDto } from './dtos';
+import { CreateTranscriptDto, TranscribeAudioDto, UpdateTranscriptDto } from './dtos';
+
+interface IUploadedAudioFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
+
+const MAX_AUDIO_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+const ALLOWED_AUDIO_MIME_TYPES = [
+  'audio/aac',
+  'audio/flac',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/wav',
+  'audio/webm',
+  'video/mp4',
+  'video/webm',
+];
 
 @Controller('chat-to-text')
 export class ChatToTextController {
   private readonly logger = new Logger(ChatToTextController.name);
 
   constructor(private readonly chatToTextService: ChatToTextService) {}
+
+  /**
+   * Converts an uploaded audio or video file to a persisted transcript.
+   * The upload is held in memory only for the provider request and is not stored.
+   */
+  @Post('transcribe')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_AUDIO_FILE_SIZE_BYTES } }))
+  async transcribeAudio(
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+  fileType: /^(audio|video)\/(aac|flac|m4a|x-m4a|mpeg|mp4|ogg|wav|webm)$/,
+})
+        .addMaxSizeValidator({ maxSize: MAX_AUDIO_FILE_SIZE_BYTES })
+        .build({ fileIsRequired: true }),
+    )
+    file: IUploadedAudioFile,
+    @Body() transcribeAudioDto: TranscribeAudioDto,
+  ) {
+    if (!ALLOWED_AUDIO_MIME_TYPES.includes(file.mimetype)) {
+      throw new BadRequestException('Unsupported audio or video file type');
+    }
+
+    const transcript = await this.chatToTextService.transcribeAudio(
+      file,
+      transcribeAudioDto,
+    );
+
+    return {
+      success: true,
+      data: transcript,
+      message: 'Audio transcribed successfully',
+    };
+  }
 
   /**
    * Create a new transcript from raw audio/video text

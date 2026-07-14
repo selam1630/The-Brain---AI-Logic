@@ -13,6 +13,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { ChatToTextService } from './chat-to-text.service';
 import { PrismaService } from '@/common/prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
 import { CreateTranscriptDto } from './dtos';
 import { TranscriptStatus } from '@prisma/client';
 
@@ -31,6 +32,10 @@ describe('ChatToTextService', () => {
       update: jest.fn(),
       delete: jest.fn(),
     },
+  };
+
+  const mockConfigService = {
+    get: jest.fn(),
   };
 
   const mockConversation = {
@@ -67,6 +72,10 @@ describe('ChatToTextService', () => {
           provide: PrismaService,
           useValue: mockPrismaService,
         },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
+        },
       ],
     }).compile();
 
@@ -74,6 +83,14 @@ describe('ChatToTextService', () => {
     prismaService = module.get<PrismaService>(PrismaService);
 
     jest.clearAllMocks();
+    mockConfigService.get.mockImplementation(
+      (key: string, defaultValue?: string): string | undefined => {
+        if (key === 'OPENAI_API_KEY') {
+          return 'test-api-key';
+        }
+        return defaultValue;
+      },
+    );
   });
 
   describe('create', () => {
@@ -94,6 +111,15 @@ describe('ChatToTextService', () => {
         where: { id: 'conv_123' },
       });
       expect(mockPrismaService.transcript.create).toHaveBeenCalled();
+      expect(mockPrismaService.transcript.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            messages: expect.objectContaining({
+              create: expect.objectContaining({ content: 'Hello world.' }),
+            }),
+          }),
+        }),
+      );
     });
 
     it('should throw NotFoundException if conversation does not exist', async () => {
@@ -306,6 +332,45 @@ describe('ChatToTextService', () => {
       expect(normalizedText).toMatch(/^[A-Z]/); // Starts with capital
       expect(normalizedText).not.toContain('  '); // No double spaces
       expect(normalizedText.match(/!/g)?.length || 0).toBeLessThanOrEqual(1); // No multiple !
+    });
+  });
+
+  describe('transcribeAudio', () => {
+    it('should transcribe with OpenAI and persist the normalized transcript', async () => {
+      const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ text: '  hello from audio  ' }), { status: 200 }),
+      );
+
+      mockPrismaService.conversation.findUnique.mockResolvedValue(mockConversation);
+      mockPrismaService.transcript.create.mockResolvedValue(mockTranscript);
+
+      const result = await service.transcribeAudio(
+        {
+          buffer: Buffer.from('audio bytes'),
+          mimetype: 'audio/webm',
+          originalname: 'recording.webm',
+          size: 11,
+        },
+        { conversationId: 'conv_123', language: 'en' },
+      );
+
+      expect(result).toEqual(mockTranscript);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/audio/transcriptions',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer test-api-key' },
+          method: 'POST',
+        }),
+      );
+      expect(mockPrismaService.transcript.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            normalizedText: 'Hello from audio.',
+            provider: 'openai',
+          }),
+        }),
+      );
+      fetchMock.mockRestore();
     });
   });
 });

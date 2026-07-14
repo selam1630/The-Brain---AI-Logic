@@ -9,16 +9,194 @@
  * - Manage transcript lifecycle (PENDING, PROCESSING, COMPLETED, FAILED)
  */
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/common/prisma/prisma.service';
-import { CreateTranscriptDto, UpdateTranscriptDto } from './dtos';
-import { TranscriptStatus, Transcript, Conversation } from '@prisma/client';
+import { CreateTranscriptDto, TranscribeAudioDto, UpdateTranscriptDto } from './dtos';
+import { MessageType, TranscriptStatus, Transcript } from '@prisma/client';
+
+const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
+const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
+
+interface IUploadedAudioFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
+
+interface IOpenAiTranscriptionResponse {
+  text: string;
+}
+
+interface IOpenAiErrorResponse {
+  error?: {
+    message?: string;
+  };
+}
 
 @Injectable()
 export class ChatToTextService {
   private readonly logger = new Logger(ChatToTextService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  /**
+   * Transcribes an uploaded audio file with OpenAI and persists the normalized result.
+   * Raw upload bytes are discarded after the upstream request completes.
+   *
+   * @param file - Validated in-memory audio upload
+   * @param transcribeAudioDto - Conversation and optional language metadata
+   * @returns Completed transcript record
+   * @throws {ServiceUnavailableException} If the OpenAI key is missing
+   * @throws {BadGatewayException} If the transcription provider fails
+   */
+  async transcribeAudio(
+    file: IUploadedAudioFile,
+    transcribeAudioDto: TranscribeAudioDto,
+  ): Promise<Transcript> {
+    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    if (!apiKey) {
+      throw new ServiceUnavailableException('Speech-to-text service is not configured');
+    }
+
+    const transcription = await this.requestOpenAiTranscription(
+      file,
+      apiKey,
+      transcribeAudioDto.language,
+    );
+
+    return this.create({
+      conversationId: transcribeAudioDto.conversationId,
+      language: transcribeAudioDto.language,
+      provider: 'openai' as CreateTranscriptDto['provider'],
+      rawText: transcription.text,
+    });
+  }
+
+  /**
+   * Sends a file to OpenAI's transcription endpoint.
+   * @param file - Audio upload held only in request memory
+   * @param apiKey - OpenAI API credential
+   * @param language - Optional language hint
+   * @returns Provider transcription payload
+   */
+  private async requestOpenAiTranscription(
+    file: IUploadedAudioFile,
+    apiKey: string,
+    language?: string,
+  ): Promise<IOpenAiTranscriptionResponse> {
+    const formData = new FormData();
+    const audio = new Blob([Uint8Array.from(file.buffer)], { type: file.mimetype });
+    formData.append('file', audio, file.originalname);
+    formData.append(
+      'model',
+      this.configService.get<string>(
+        'OPENAI_TRANSCRIPTION_MODEL',
+        DEFAULT_TRANSCRIPTION_MODEL,
+      ),
+    );
+
+    if (language) {
+      formData.append('language', language);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: formData,
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `OpenAI transcription request failed: ${this.getErrorMessage(error)}`,
+        this.getErrorStack(error),
+      );
+      throw new BadGatewayException('Speech-to-text provider is unavailable');
+    }
+
+    if (!response.ok) {
+      const providerError = await this.getOpenAiErrorMessage(response);
+      this.logger.error(
+        `OpenAI transcription failed with status ${response.status}: ${providerError}`,
+      );
+      throw new BadGatewayException(
+        this.getProviderFailureMessage(response.status),
+      );
+    }
+
+    const payload: unknown = await response.json();
+    if (!this.isOpenAiTranscriptionResponse(payload)) {
+      throw new BadGatewayException('Speech-to-text provider returned an invalid response');
+    }
+
+    if (!payload.text.trim()) {
+      throw new BadRequestException('No speech was detected in the uploaded file');
+    }
+
+    return payload;
+  }
+
+  /** Extracts a non-sensitive diagnostic from an OpenAI error response for logs. */
+  private async getOpenAiErrorMessage(response: Response): Promise<string> {
+    const body = await response.text();
+
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (this.isOpenAiErrorResponse(parsed) && parsed.error?.message) {
+        return parsed.error.message;
+      }
+    } catch {
+      // Provider errors are not guaranteed to be JSON.
+    }
+
+    return body || 'No provider error message returned';
+  }
+
+  /** Maps upstream statuses to client-safe, actionable API responses. */
+  private getProviderFailureMessage(status: number): string {
+    if (status === 401 || status === 403) {
+      return 'OpenAI authentication failed. Check OPENAI_API_KEY.';
+    }
+
+    if (status === 429) {
+      return 'OpenAI rate limit or account quota has been reached.';
+    }
+
+    if (status === 400 || status === 413 || status === 422) {
+      return 'OpenAI could not process the uploaded audio file.';
+    }
+
+    return 'Speech-to-text provider is temporarily unavailable.';
+  }
+
+  /** Validates the minimal shape needed from the OpenAI JSON response. */
+  private isOpenAiTranscriptionResponse(
+    payload: unknown,
+  ): payload is IOpenAiTranscriptionResponse {
+    return (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'text' in payload &&
+      typeof payload.text === 'string'
+    );
+  }
+
+  /** Validates the minimal shape of an OpenAI error response. */
+  private isOpenAiErrorResponse(payload: unknown): payload is IOpenAiErrorResponse {
+    return typeof payload === 'object' && payload !== null && 'error' in payload;
+  }
 
   /**
    * Extract error message from unknown caught errors
@@ -75,6 +253,16 @@ export class ChatToTextService {
           language: createTranscriptDto.language || 'en',
           provider: createTranscriptDto.provider || 'web-speech-api',
           status: TranscriptStatus.COMPLETED,
+          messages: {
+            create: {
+              content: normalizedText,
+              conversation: {
+                connect: { id: createTranscriptDto.conversationId },
+              },
+              sender: 'speech-to-text',
+              type: MessageType.USER,
+            },
+          },
         },
       });
 

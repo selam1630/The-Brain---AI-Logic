@@ -35,6 +35,7 @@ describe('ChatToTextController (Integration)', () => {
           provide: ChatToTextService,
           useValue: {
             create: jest.fn(),
+            transcribeAudio: jest.fn(),
             findById: jest.fn(),
             findByConversation: jest.fn(),
             update: jest.fn(),
@@ -93,6 +94,32 @@ describe('ChatToTextController (Integration)', () => {
         .post('/chat-to-text')
         .send(invalidDto)
         .expect(400);
+    });
+  });
+
+  describe('POST /chat-to-text/transcribe', () => {
+    it('should accept an audio upload and return the completed transcript', async () => {
+      jest.spyOn(chatToTextService, 'transcribeAudio').mockResolvedValue(mockTranscript);
+
+      const response = await request(app.getHttpServer())
+        .post('/chat-to-text/transcribe')
+        .field('conversationId', 'conv_123')
+        .field('language', 'en')
+        .attach('file', Buffer.from('audio bytes'), {
+          contentType: 'audio/webm',
+          filename: 'recording.webm',
+        })
+        .expect(201);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual(JSON.parse(JSON.stringify(mockTranscript)));
+      expect(chatToTextService.transcribeAudio).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mimetype: 'audio/webm',
+          originalname: 'recording.webm',
+        }),
+        { conversationId: 'conv_123', language: 'en' },
+      );
     });
   });
 

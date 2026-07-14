@@ -370,7 +370,22 @@ const { register, handleSubmit, formState: { errors } } = useForm({
 
 ### Chat-to-Text Endpoints
 
-#### 1. Create Transcript
+#### 1. Transcribe an Audio or Video File
+
+```http
+POST /api/v1/chat-to-text/transcribe
+Content-Type: multipart/form-data
+
+file=@recording.webm
+conversationId=your_conversation_id
+language=en
+```
+
+- Accepts `aac`, `flac`, `m4a`, `mp3`, `mp4`, `ogg`, `wav`, and `webm` containers up to 25 MB.
+- The backend sends the upload to OpenAI using `OPENAI_API_KEY`, normalizes the returned text, and persists a `Transcript` plus linked conversation `Message`.
+- Raw audio bytes are used only for the upstream request and are not stored in the database.
+
+#### 2. Create Transcript
 ```http
 POST /api/v1/chat-to-text
 Content-Type: application/json
